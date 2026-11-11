@@ -150,7 +150,7 @@ A silent server may be filtered, unreachable, or simply slow. Treat a result as 
 
 ### Cache and DNS troubleshooting
 
-NordVPN discovery is cached under `~/.cache/nordike` for six hours by default. Use `-refresh` to fetch again or `-ttl` to change the lifetime.
+NordVPN discovery is cached under `~/.cache/nordike` for six hours by default. When the official API fails and no usable Nord cache exists, the CLI and desktop engine fall back to the NordVPN catalog from gluetun-servers. Its load and online status are unknown, and IKEv2 support is tested without being advertised by that catalog. Use `-refresh` to fetch again or `-ttl` to change the lifetime.
 
 In custom-file discovery, if DNS returns only private addresses, vpnban stops by default. Check your VPN and resolver settings before retrying. `-allow-poisoned` overrides this safeguard when that behavior is intentional.
 
@@ -225,7 +225,7 @@ If vpnban helps you, **give it a star ⭐** and share your feedback. Every provi
 
 ## OpenWrt (Google WiFi / ARMv7)
 
-The Linux ARMv7 release supports OpenWrt routers reporting `armv7l`, including the Google router described above. It is a static CLI build (no desktop UI or additional Go runtime required). Releases named `vpnban_<version>_linux_arm.tar.gz` target ARMv7 with GOARM=7. Other Google router models may use a different architecture; check `uname -m` first.
+The Linux ARMv7 release supports OpenWrt routers reporting `armv7l`, including the Google router described above. It is a static CLI build (no desktop UI or additional Go runtime required). Releases named `vpnban_<version>_linux_arm.tar.gz` and `vpnban_<version>_openwrt_armv7.tar.gz` contain the same ARMv7 binary built with GOARM=7. Other Google router models may use a different architecture; check `uname -m` first.
 
 On OpenWrt 25.12, install the download prerequisites if needed, then run the installer:
 

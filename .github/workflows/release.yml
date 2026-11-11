@@ -57,6 +57,9 @@ jobs:
             zip "${archive}.zip" "$bin"
           else
             tar -czf "${archive}.tar.gz" "$bin"
+            if [ "$GOOS" = "linux" ] && [ "$GOARCH" = "arm" ]; then
+              cp "${archive}.tar.gz" "vpnban_${version}_openwrt_armv7.tar.gz"
+            fi
           fi
       - uses: actions/upload-artifact@v4
         with:

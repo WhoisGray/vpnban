@@ -70,6 +70,7 @@ type nordServer struct {
 	Tech     []string `json:"technologies"`
 	WGPub    string   `json:"wg_public_key,omitempty"`
 	Version  string   `json:"version,omitempty"`
+	Fallback bool     `json:"gluetun_fallback,omitempty"`
 }
 
 type nordHit struct {
@@ -154,7 +155,7 @@ func runNord(o nordOpts) error {
 	countries := splitComma(o.country)
 	filtered := list[:0:0]
 	for _, s := range list {
-		if !o.offline && !strings.EqualFold(s.Status, "online") {
+		if !o.offline && !s.Fallback && !strings.EqualFold(s.Status, "online") {
 			continue
 		}
 		if s.Load > o.maxLoad || !countryOK(s, countries) {
@@ -285,7 +286,7 @@ func probeServer(ctx context.Context, pool *udpPool, prime *big.Int, s nordServe
 	h.HasWG = hasTech(s.Tech, "wireguard_udp")
 	h.HasOUDP = hasTech(s.Tech, "openvpn_udp")
 	h.HasOTCP = hasTech(s.Tech, "openvpn_tcp")
-	h.HasIKE = hasTech(s.Tech, "ikev2")
+	h.HasIKE = s.Fallback || hasTech(s.Tech, "ikev2")
 	if ctx.Err() != nil {
 		h.Fresh, h.Firewall = "skip", "interrupted"
 		return h
@@ -567,6 +568,9 @@ func flattenNord(hits []nordHit) ([]map[string]string, []string) {
 		for _, id := range s.Services {
 			row["svc_"+id] = "yes"
 		}
+		if s.Fallback {
+			row["load"] = "unknown"
+		}
 		rows = append(rows, row)
 	}
 	return rows, cols
@@ -694,16 +698,31 @@ func loadNord(ctx context.Context, refresh bool, ttl time.Duration) ([]nordServe
 	}
 	if !refresh {
 		if list, fetched, ok := readNordCache(path, ttl, time.Now()); ok {
-			return list, "cache " + path, fetched, nil
+			return list, nordCacheSource(list, "cache "+path), fetched, nil
 		}
 	}
 	list, err := fetchNord(ctx)
 	if err != nil {
 		if list, fetched, ok := readNordCache(path, 365*24*time.Hour, time.Now()); ok {
 			fmt.Fprintf(os.Stderr, "download failed (%v); using stale cache\n", err)
-			return list, "stale " + path, fetched, nil
+			return list, nordCacheSource(list, "stale "+path), fetched, nil
 		}
-		return nil, "", time.Time{}, err
+		if ctx.Err() != nil {
+			return nil, "", time.Time{}, ctx.Err()
+		}
+		fmt.Fprintf(os.Stderr, "Nord API failed (%v); trying gluetun-servers fallback\n", err)
+		catalog, fallbackErr := fetchGluetun(ctx, "nordvpn")
+		if fallbackErr != nil {
+			return nil, "", time.Time{}, fmt.Errorf("Nord API: %v; gluetun fallback: %w", err, fallbackErr)
+		}
+		list = nordFromGluetun(catalog)
+		if len(list) == 0 {
+			return nil, "", time.Time{}, fmt.Errorf("Nord API: %v; gluetun fallback contains no usable endpoints", err)
+		}
+		if cacheErr := writeNordCache(path, list); cacheErr != nil {
+			fmt.Fprintf(os.Stderr, "not caching: %v\n", cacheErr)
+		}
+		return list, "gluetun-servers fallback (load and status unknown; IKEv2 unverified)", time.Now().UTC(), nil
 	}
 	if err := writeNordCache(path, list); err != nil {
 		fmt.Fprintf(os.Stderr, "not caching: %v\n", err)
@@ -1084,7 +1103,7 @@ func (p scanProtos) match(s nordServer) bool {
 	if p.full {
 		return true
 	}
-	if p.ike && hasTech(s.Tech, "ikev2") {
+	if p.ike && (s.Fallback || hasTech(s.Tech, "ikev2")) {
 		return true
 	}
 	if p.wg && hasTech(s.Tech, "wireguard_udp") {
@@ -1159,7 +1178,7 @@ func countryOK(s nordServer, qs []string) bool {
 	country := strings.ToLower(s.Country)
 	city := strings.ToLower(s.City)
 	for _, q := range qs {
-		if code == q || country == q {
+		if code == q || country == q || countryCodeMatches(q, s.Country, "") {
 			return true
 		}
 		if a, ok := nordAlias[q]; ok && code == a {
@@ -1177,4 +1196,53 @@ var nordAlias = map[string]string{
 	"uk":  "gb",
 	"usa": "us",
 	"uae": "ae",
+}
+
+// nordFromGluetun preserves the catalog's advertised protocols. The catalog
+// does not publish Nord's load, online status, or IKEv2 support.
+func nordFromGluetun(c gluetunCatalog) []nordServer {
+	result := make([]nordServer, 0, len(c.Servers))
+	indices := make(map[string]int)
+	for _, item := range c.Servers {
+		if item.Hostname == "" {
+			continue
+		}
+		for _, ip := range item.IPs {
+			parsed := net.ParseIP(ip)
+			if parsed == nil || parsed.To4() == nil || poisoned(parsed) {
+				continue
+			}
+			key := item.Hostname + "\x00" + ip
+			i, ok := indices[key]
+			if !ok {
+				i = len(result)
+				indices[key] = i
+				result = append(result, nordServer{Name: firstNonEmpty(item.ServerName, item.Hostname), Hostname: item.Hostname, IP: ip, Country: firstNonEmpty(item.Country, item.Region), City: item.City, Status: "unknown", Load: -1, Fallback: true})
+			}
+			s := &result[i]
+			switch item.VPN {
+			case "wireguard":
+				if item.WGPubKey != "" {
+					s.WGPub = item.WGPubKey
+					s.Tech = append(s.Tech, "wireguard_udp")
+				}
+			case "openvpn":
+				if item.UDP {
+					s.Tech = append(s.Tech, "openvpn_udp")
+				}
+				if item.TCP {
+					s.Tech = append(s.Tech, "openvpn_tcp")
+				}
+			}
+			s.Tech = orderTech(s.Tech)
+		}
+	}
+	return result
+}
+
+func nordCacheSource(list []nordServer, source string) string {
+	if len(list) > 0 && list[0].Fallback {
+		return source + " (gluetun-servers fallback; load and status unknown; IKEv2 unverified)"
+	}
+	return source
 }
