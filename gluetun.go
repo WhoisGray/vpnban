@@ -83,11 +83,11 @@ func canonicalProvider(name string) (string, error) {
 }
 
 func gluetunCachePath(name string) (string, error) {
-	home, err := os.UserHomeDir()
+	base, err := cacheBase()
 	if err != nil {
 		return name + "-gluetun-cache.json", nil
 	}
-	dir := filepath.Join(home, ".cache", "nordike", "gluetun")
+	dir := filepath.Join(base, "gluetun")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -266,7 +266,7 @@ func runGluetun(o gluetunOpts) error {
 		o.conc = 1
 	}
 	if !o.saw["c"] {
-		o.conc = 32
+		o.conc = defaultWorkers(32)
 	}
 	if !o.saw["ike-user"] {
 		o.ikeUser = "this is health check"

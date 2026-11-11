@@ -258,3 +258,19 @@ go build -o vpnban .
 ---
 
 اگر بان برایتان مفید بود، با یک **ستاره ⭐** و اشتراک تجربه‌تان از پروژه حمایت کنید.
+
+
+## نصب روی OpenWrt و روتر Google با ARMv7
+
+برای روتری که خروجی `uname -m` آن `armv7l` است، فایل انتشار `vpnban_<version>_linux_arm.tar.gz` با تنظیم `GOARM=7` ساخته می‌شود. معماری مدل‌های دیگر ممکن است متفاوت باشد. باینری CLI مستقل است و به نصب Go نیاز ندارد.
+
+```sh
+apk update
+apk add curl ca-bundle
+curl -fsSL https://raw.githubusercontent.com/WhoisGray/vpnban/main/install.sh -o /tmp/vpnban-install.sh
+sh /tmp/vpnban-install.sh
+cd /tmp
+vpnban -nord -country US -limit 10
+```
+
+نصب‌کننده checksum را بررسی و برنامه را در `/usr/bin/vpnban` نصب می‌کند. ابتدا باید یک نسخه جدید دارای فایل ARMv7 در Releases منتشر شود؛ پس از آن `vpnban -update` نیز قابل استفاده است. تعداد هم‌زمانی در OpenWrt با توجه به تعداد هسته‌ها، بین ۴ تا ۱۶ انتخاب می‌شود و با `-c 4` قابل تغییر است. کش فهرست Nord و سایر سرویس‌ها به‌طور پیش‌فرض شش ساعت در `/tmp/vpnban-cache` می‌ماند و با راه‌اندازی مجدد پاک می‌شود؛ `-ttl 12h` زمان آن را تغییر می‌دهد و `-refresh` دریافت مجدد را انجام می‌دهد. برای جلوگیری از نوشتن گزارش‌ها روی حافظه فلش، برنامه را از `/tmp` اجرا کنید. این برنامه سرورها را بررسی می‌کند و اتصال VPN را تنظیم نمی‌کند.

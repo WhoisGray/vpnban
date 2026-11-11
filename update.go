@@ -125,6 +125,10 @@ func releaseAssetName(tag, goos, goarch string) (string, error) {
 	}
 	switch goarch {
 	case "amd64", "arm64":
+	case "arm":
+		if goos != "linux" {
+			return "", fmt.Errorf("unsupported OS/architecture %s/%s", goos, goarch)
+		}
 	default:
 		return "", fmt.Errorf("unsupported architecture %s", goarch)
 	}

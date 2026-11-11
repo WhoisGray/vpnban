@@ -169,7 +169,7 @@ In custom-file discovery, if DNS returns only private addresses, vpnban stops by
 | `-offline` | `false` | Include NordVPN servers not marked online |
 | `-refresh` | `false` | Download the selected provider catalog again |
 | `-ttl` | `6h` | Selected provider cache lifetime |
-| `-c` | `80`; NordVPN: `32` | Concurrent workers |
+| `-c` | Automatic | Concurrent workers; OpenWrt uses 2 per CPU (4–16), elsewhere 80 for file scans and 32 for provider scans |
 | `-ike-timeout` | `1s` | IKEv2 timeout |
 | `-tcp-timeout` | `1200ms`; NordVPN: `1s` | TCP timeout |
 | `-ike-user` | Mode-dependent | IKE_AUTH user identity |
@@ -216,8 +216,26 @@ go build -o vpnban .
 ./vpnban -version
 ```
 
-CI tests and cross-compiles six OS/architecture targets. Version tags trigger the release workflow, which tests, packages binaries, and publishes SHA256 checksums.
+CI tests and cross-compiles CLI targets including Linux ARMv7. Version tags trigger the release workflow, which tests, packages binaries, and publishes SHA256 checksums.
 
 ---
 
 If vpnban helps you, **give it a star ⭐** and share your feedback. Every provider contribution makes the project more useful.
+
+
+## OpenWrt (Google WiFi / ARMv7)
+
+The Linux ARMv7 release supports OpenWrt routers reporting `armv7l`, including the Google router described above. It is a static CLI build (no desktop UI or additional Go runtime required). Releases named `vpnban_<version>_linux_arm.tar.gz` target ARMv7 with GOARM=7. Other Google router models may use a different architecture; check `uname -m` first.
+
+On OpenWrt 25.12, install the download prerequisites if needed, then run the installer:
+
+```sh
+apk update
+apk add curl ca-bundle
+curl -fsSL https://raw.githubusercontent.com/WhoisGray/vpnban/main/install.sh -o /tmp/vpnban-install.sh
+sh /tmp/vpnban-install.sh
+cd /tmp
+vpnban -nord -country US -limit 10
+```
+
+The installer verifies the release SHA256 and installs to `/usr/bin/vpnban` on OpenWrt. A release containing the ARMv7 asset must first be published. Use `vpnban -update` to update after that. `-c` overrides automatic concurrency, e.g. `-c 4`. NordVPN and provider discovery caches live in `/tmp/vpnban-cache` on OpenWrt, default to six hours, and disappear on reboot; `-ttl 12h` changes the lifetime and `-refresh` downloads again. Run from `/tmp` to avoid writing scan reports to flash. The program scans endpoints; it does not configure a VPN connection.

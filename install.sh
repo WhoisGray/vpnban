@@ -28,6 +28,7 @@ arch=$(uname -m)
 case "$arch" in
   x86_64|amd64) goarch=amd64 ;;
   aarch64|arm64) goarch=arm64 ;;
+  armv7l|armv7*) goarch=arm ;;
   *)
     echo "unsupported architecture: $arch" >&2
     exit 1
@@ -98,6 +99,8 @@ chmod 755 "$tmp/vpnban"
 
 if command -v vpnban >/dev/null 2>&1; then
   dest=$(command -v vpnban)
+elif [ -f /etc/openwrt_release ] && [ -w /usr/bin ]; then
+  dest=/usr/bin/vpnban
 elif [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
   dest=/usr/local/bin/vpnban
 else

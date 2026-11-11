@@ -34,6 +34,13 @@ func TestReleaseAssetName(t *testing.T) {
 	if err != nil || name != "vpnban_1.0.1_windows_amd64.zip" {
 		t.Fatalf("windows: %s %v", name, err)
 	}
+	name, err = releaseAssetName("v1.0.1", "linux", "arm")
+	if err != nil || name != "vpnban_1.0.1_linux_arm.tar.gz" {
+		t.Fatalf("linux arm: %s %v", name, err)
+	}
+	if _, err := releaseAssetName("v1.0.1", "darwin", "arm"); err == nil {
+		t.Fatal("expected unsupported OS/arch combination")
+	}
 	if _, err := releaseAssetName("v1.0.1", "linux", "386"); err == nil {
 		t.Fatal("expected unsupported arch")
 	}

@@ -67,7 +67,7 @@ type probe struct {
 func main() {
 	file := flag.String("file", "", "servers.json, a text file of hosts (one per line), or vpnban-results.json")
 	phase := flag.String("phase", "", "1 discover, 2 probe, all both. Empty: phase 2 when no file, both when the file is a catalog")
-	conc := flag.Int("c", 80, "number of concurrent workers")
+	conc := flag.Int("c", defaultWorkers(80), "number of concurrent workers (automatic by default)")
 	dnsAddr := flag.String("dns", "1.1.1.1:53", "DNS server")
 	ikeTimeout := flag.Duration("ike-timeout", 1000*time.Millisecond, "IKEv2 timeout")
 	tcpTimeout := flag.Duration("tcp-timeout", 1200*time.Millisecond, "TCP connect timeout")

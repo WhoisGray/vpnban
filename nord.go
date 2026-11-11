@@ -106,7 +106,7 @@ type nordHit struct {
 func runNord(o nordOpts) error {
 	// 128 in-flight handshakes drew no replies at all. 32 verified every server in a sample.
 	if !o.saw["c"] {
-		o.conc = 32
+		o.conc = defaultWorkers(32)
 	}
 	if o.conc < 1 {
 		o.conc = 1
@@ -712,11 +712,10 @@ func loadNord(ctx context.Context, refresh bool, ttl time.Duration) ([]nordServe
 }
 
 func nordCachePath() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := cacheBase()
 	if err != nil {
 		return "nord-full-cache.json", nil
 	}
-	dir := filepath.Join(home, ".cache", "nordike")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
