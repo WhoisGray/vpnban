@@ -86,6 +86,11 @@ func main() {
 	country := flag.String("country", "", "NordVPN country code or name, comma-separated")
 	maxLoad := flag.Int("load", 100, "Skip NordVPN servers above this load")
 	offline := flag.Bool("offline", false, "Also probe NordVPN servers that are not online")
+	nordUsername := flag.String("nord-username", "", "NordVPN service username for the Apple profile (or VPNBAN_NORD_USERNAME)")
+	nordPassword := flag.String("nord-password", "", "NordVPN service password for the Apple profile (or VPNBAN_NORD_PASSWORD)")
+	mobileconfig := flag.String("mobileconfig", "NordVPN-IKEv2.mobileconfig", "NordVPN Apple profile output path")
+	maxServers := flag.Int("max-servers", 26, "Maximum servers in the NordVPN Apple profile (0 means unlimited)")
+	prefixConfig := flag.String("prefix-config", "$I", "Prefix for NordVPN profile connection names")
 	guiMode := flag.Bool("gui", false, "launch interactive graphical web/desktop UI")
 	webMode := flag.Bool("web", false, "alias for -gui")
 	guiPort := flag.Int("port", 8329, "port for GUI web dashboard")
@@ -119,6 +124,8 @@ func main() {
 			ikeTimeout: *ikeTimeout, tcpTimeout: *tcpTimeout,
 			ikeUser: *ikeUser, ikeID: *ikeID,
 			jsonPath: *jsonOut, csvPath: *csvOut, xlsxPath: *xlsxOut,
+			inputPath: *file, username: *nordUsername, password: *nordPassword,
+			mobileconfigPath: *mobileconfig, maxServers: *maxServers, prefixConfig: *prefixConfig,
 		}
 		flag.Visit(func(f *flag.Flag) { opts.seen(f.Name) })
 		if err := runNord(opts); err != nil {

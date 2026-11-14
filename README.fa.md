@@ -154,6 +154,24 @@ vpnban -file server.txt              # هر خط یک دامنه یا IPv4
 - `nord-results.csv`
 - `nord-results.xlsx`
 
+اگر نام کاربری و رمز سرویس NordVPN در متغیرهای محیطی زیر وجود داشته باشند، بعد از اسکن فایل `NordVPN-IKEv2.mobileconfig` نیز به‌صورت خودکار ساخته می‌شود:
+
+```bash
+export VPNBAN_NORD_USERNAME='service-username'
+export VPNBAN_NORD_PASSWORD='service-password'
+vpnban -nord -country se -limit 40
+```
+
+برای ساخت پروفایل از JSON قبلی بدون اسکن، یا تعیین مشخصات از طریق پارامتر:
+
+```bash
+vpnban -nord -file nord-results.json -nord-username 'service-username' -nord-password 'service-password' -max-servers 20 -prefix-config '$I' -mobileconfig my-nord.mobileconfig
+```
+
+ورودی می‌تواند گزارش Nord با آرایهٔ `servers` یا خود آرایه باشد. هر پارامتر نام کاربری یا رمز، بر متغیر محیطی متناظر اولویت دارد. مقدار پیش‌فرض `-max-servers` برابر ۲۶ است و صفر محدودیت را برمی‌دارد. فقط وقتی تعداد سرورهای واجد شرایط از سقف بیشتر باشد، حداکثر دو سرور از هر شهر انتخاب می‌شود؛ زیرشبکه‌های IPv4 متفاوت و سپس تأخیر کمتر ترجیح دارند. سرور باید آنلاین و دارای پشتیبانی IKEv2، آدرس، نام میزبان، شهر و تأخیر اندازه‌گیری‌شده کمتر از ۵۰۰۰ میلی‌ثانیه باشد؛ برای نتیجهٔ مناسب اسکن IKEv2 انجام دهید. اگر سروری واجد شرایط نباشد، ساخت پروفایل خطا می‌دهد.
+
+فایل mobileconfig حاوی رمز سرویس است؛ آن را محرمانه نگه دارید. رمز در خط فرمان ممکن است در تاریخچهٔ shell یا فهرست پردازش‌ها دیده شود. فایل را به دستگاه Apple بفرستید و از مسیر Settings → General → VPN & Device Management نصب کنید.
+
 حالت فایل، خروجی را در `vpnban-results.json` و `vpnban-results.csv` و `vpnban-results.xlsx` می‌نویسد.
 
 کش فهرست Nord در `~/.cache/nordike` است و ۶ ساعت می‌ماند. `-refresh` کش را دور می‌زند.

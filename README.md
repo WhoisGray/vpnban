@@ -108,6 +108,26 @@ vpnban -nord -refresh                      # Bypass the cached server list
 
 `-proto` applies to NordVPN mode. It accepts `ikev2`, `wire` (aliases: `wg`, `wireguard`), `openvpn`, comma-separated combinations, or `full`. Servers without any selected protocol are filtered out. Full mode also probes UDP/53 and TCP/80 to help identify unusual firewall responses.
 
+### Apple IKEv2 profile for NordVPN
+
+Set your NordVPN **service credentials** (not your account login) to automatically create `NordVPN-IKEv2.mobileconfig` after a Nord scan:
+
+```bash
+export VPNBAN_NORD_USERNAME='service-username'
+export VPNBAN_NORD_PASSWORD='service-password'
+vpnban -nord -country se -limit 40
+```
+
+Create a profile from an existing Nord report without scanning, or pass credentials as flags:
+
+```bash
+vpnban -nord -file nord-results.json -nord-username 'service-username' -nord-password 'service-password' -max-servers 20 -prefix-config '$I' -mobileconfig my-nord.mobileconfig
+```
+
+The input can be a Nord report with a `servers` array or an array of server objects. Each credential flag overrides its corresponding environment variable. The default maximum is 26; `-max-servers 0` removes the limit. If eligible servers exceed the maximum, at most two per city are chosen, preferring distinct IPv4 /24 subnets, then lower latency. Only online IKEv2-capable servers with an address, hostname, city and measured latency under 5000 ms are included; use an IKEv2 scan for meaningful results. If none qualify, profile creation reports an error.
+
+The profile contains your service password; keep it private. Command-line credentials may also be visible in shell history or process lists. Transfer the `.mobileconfig` to your Apple device and install it via Settings → General → VPN & Device Management.
+
 ### Your own server list
 
 Create `servers.txt` with one authorized domain or IPv4 address per line. Blank lines and `#` comments are supported.

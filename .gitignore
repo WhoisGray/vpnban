@@ -18,6 +18,7 @@
 *-results.*
 *.pcap
 *.har
+*.mobileconfig
 
 # Temporary & Raw Uploaded Assets
 Gemini_Generated_Image_*

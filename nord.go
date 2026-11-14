@@ -29,23 +29,25 @@ const (
 )
 
 type nordOpts struct {
-	refresh    bool
-	ttl        time.Duration
-	limit      int
-	conc       int
-	country    string
-	maxLoad    int
-	offline    bool
-	proto      string
-	scan       scanProtos
-	ikeTimeout time.Duration
-	tcpTimeout time.Duration
-	ikeUser    string
-	ikeID      string
-	jsonPath   string
-	csvPath    string
-	xlsxPath   string
-	saw        map[string]bool
+	refresh                                                       bool
+	ttl                                                           time.Duration
+	limit                                                         int
+	conc                                                          int
+	country                                                       string
+	maxLoad                                                       int
+	offline                                                       bool
+	proto                                                         string
+	scan                                                          scanProtos
+	ikeTimeout                                                    time.Duration
+	tcpTimeout                                                    time.Duration
+	ikeUser                                                       string
+	ikeID                                                         string
+	jsonPath                                                      string
+	csvPath                                                       string
+	xlsxPath                                                      string
+	inputPath, username, password, mobileconfigPath, prefixConfig string
+	maxServers                                                    int
+	saw                                                           map[string]bool
 }
 
 func (o *nordOpts) seen(name string) {
@@ -105,6 +107,61 @@ type nordHit struct {
 }
 
 func runNord(o nordOpts) error {
+	if !o.saw["nord-username"] {
+		o.username = os.Getenv("VPNBAN_NORD_USERNAME")
+	}
+	if !o.saw["nord-password"] {
+		o.password = os.Getenv("VPNBAN_NORD_PASSWORD")
+	}
+	if o.maxServers < 0 {
+		return errors.New("-max-servers must be 0 or greater")
+	}
+	if (o.username == "") != (o.password == "") {
+		return errors.New("both NordVPN service username and password are required for mobileconfig")
+	}
+	if o.username != "" {
+		if o.mobileconfigPath == "" {
+			return errors.New("mobileconfig output path cannot be empty")
+		}
+		paths := []string{o.inputPath}
+		if o.inputPath == "" {
+			if !o.saw["json"] {
+				o.jsonPath = "nord-results.json"
+			}
+			if !o.saw["csv"] {
+				o.csvPath = "nord-results.csv"
+			}
+			if !o.saw["xlsx"] {
+				o.xlsxPath = "nord-results.xlsx"
+			}
+			paths = append(paths, o.jsonPath, o.csvPath, o.xlsxPath)
+		}
+		out, err := filepath.Abs(o.mobileconfigPath)
+		if err != nil {
+			return err
+		}
+		for _, p := range paths {
+			if p != "" {
+				other, err := filepath.Abs(p)
+				if err != nil {
+					return err
+				}
+				if out == other {
+					return errors.New("mobileconfig output must differ from input and report paths")
+				}
+			}
+		}
+	}
+	if o.inputPath != "" {
+		if o.username == "" {
+			return errors.New("NordVPN service username and password are required for mobileconfig")
+		}
+		rows, err := readNordProfileJSON(o.inputPath)
+		if err != nil {
+			return err
+		}
+		return writeNordMobileconfig(o.mobileconfigPath, rows, o.username, o.password, o.prefixConfig, o.maxServers)
+	}
 	// 128 in-flight handshakes drew no replies at all. 32 verified every server in a sample.
 	if !o.saw["c"] {
 		o.conc = defaultWorkers(32)
@@ -230,6 +287,11 @@ func runNord(o nordOpts) error {
 	rows, cols := flattenNord(hits)
 	if err := writeNord(o.jsonPath, o.csvPath, o.xlsxPath, source, fetched, rows, cols); err != nil {
 		return err
+	}
+	if o.username != "" {
+		if err := writeNordMobileconfig(o.mobileconfigPath, rows, o.username, o.password, o.prefixConfig, o.maxServers); err != nil {
+			return err
+		}
 	}
 	summarizeNord(hits)
 	return nil
