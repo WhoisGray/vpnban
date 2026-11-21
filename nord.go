@@ -76,6 +76,7 @@ type nordServer struct {
 }
 
 type nordHit struct {
+	Provider   string
 	Server     nordServer
 	HasWG      bool
 	HasOUDP    bool
@@ -100,6 +101,7 @@ type nordHit struct {
 	IKEPhase1  string
 	IKEPhase2  string
 	IKEAuth    string
+	RemoteID   string
 	IKEPort    int
 	IKEMS      int
 	Fresh      string
@@ -107,6 +109,15 @@ type nordHit struct {
 }
 
 func runNord(o nordOpts) error {
+	if !o.saw["json"] {
+		o.jsonPath = "nord-results.json"
+	}
+	if !o.saw["csv"] {
+		o.csvPath = "nord-results.csv"
+	}
+	if !o.saw["xlsx"] {
+		o.xlsxPath = "nord-results.xlsx"
+	}
 	if !o.saw["nord-username"] {
 		o.username = os.Getenv("VPNBAN_NORD_USERNAME")
 	}
@@ -125,15 +136,6 @@ func runNord(o nordOpts) error {
 		}
 		paths := []string{o.inputPath}
 		if o.inputPath == "" {
-			if !o.saw["json"] {
-				o.jsonPath = "nord-results.json"
-			}
-			if !o.saw["csv"] {
-				o.csvPath = "nord-results.csv"
-			}
-			if !o.saw["xlsx"] {
-				o.xlsxPath = "nord-results.xlsx"
-			}
 			paths = append(paths, o.jsonPath, o.csvPath, o.xlsxPath)
 		}
 		out, err := filepath.Abs(o.mobileconfigPath)
@@ -162,18 +164,28 @@ func runNord(o nordOpts) error {
 		}
 		return writeNordMobileconfig(o.mobileconfigPath, rows, o.username, o.password, o.prefixConfig, o.maxServers)
 	}
-	// 128 in-flight handshakes drew no replies at all. 32 verified every server in a sample.
-	if !o.saw["c"] {
-		o.conc = defaultWorkers(32)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	result, err := scanNord(ctx, o)
+	if err != nil {
+		return err
 	}
-	if o.conc < 1 {
-		o.conc = 1
+	rows, err := result.write(o.jsonPath, o.csvPath, o.xlsxPath, false)
+	if err != nil {
+		return err
 	}
+	if o.username != "" {
+		return writeNordMobileconfig(o.mobileconfigPath, rows, o.username, o.password, o.prefixConfig, o.maxServers)
+	}
+	return nil
+}
+
+func scanNord(ctx context.Context, o nordOpts) (providerScan, error) {
 	if !o.saw["ike-timeout"] {
-		o.ikeTimeout = 1000 * time.Millisecond
+		o.ikeTimeout = time.Second
 	}
 	if !o.saw["tcp-timeout"] {
-		o.tcpTimeout = 1000 * time.Millisecond
+		o.tcpTimeout = time.Second
 	}
 	if !o.saw["ike-user"] {
 		o.ikeUser = "health@nordvpn.com"
@@ -181,33 +193,21 @@ func runNord(o nordOpts) error {
 	if !o.saw["ike-id"] {
 		o.ikeID = "nordvpn.com"
 	}
-	if !o.saw["json"] {
-		o.jsonPath = "nord-results.json"
-	}
-	if !o.saw["csv"] {
-		o.csvPath = "nord-results.csv"
-	}
-	if !o.saw["xlsx"] {
-		o.xlsxPath = "nord-results.xlsx"
-	}
 	if o.maxLoad < 0 || o.maxLoad > 100 {
-		return errors.New("-load must be between 0 and 100")
+		return providerScan{}, errNordLoad
 	}
 	if strings.TrimSpace(o.proto) == "" {
 		o.proto = "ikev2"
 	}
 	scan, err := parseScanProtos(o.proto)
 	if err != nil {
-		return err
+		return providerScan{}, err
 	}
 	o.scan = scan
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	list, source, fetched, err := loadNord(ctx, o.refresh, o.ttl)
 	if err != nil {
-		return err
+		return providerScan{}, err
 	}
 	countries := splitComma(o.country)
 	filtered := list[:0:0]
@@ -251,7 +251,7 @@ func runNord(o nordOpts) error {
 		}
 		pool, err = newUDPPool(poolN)
 		if err != nil {
-			return err
+			return providerScan{}, err
 		}
 		defer pool.Close()
 	}
@@ -271,30 +271,7 @@ func runNord(o nordOpts) error {
 	if o.scan.onIKE() {
 		hits = retryIKE(ctx, prime, hits, o)
 	}
-	sort.SliceStable(hits, func(i, j int) bool {
-		ri, rj := freshRank(hits[i].Fresh, hits[i].Firewall), freshRank(hits[j].Fresh, hits[j].Firewall)
-		if ri != rj {
-			return ri < rj
-		}
-		if hits[i].Server.Load != hits[j].Server.Load {
-			return hits[i].Server.Load < hits[j].Server.Load
-		}
-		if a, b := hits[i].rtt(), hits[j].rtt(); a != b {
-			return a < b
-		}
-		return hits[i].Server.Hostname < hits[j].Server.Hostname
-	})
-	rows, cols := flattenNord(hits)
-	if err := writeNord(o.jsonPath, o.csvPath, o.xlsxPath, source, fetched, rows, cols); err != nil {
-		return err
-	}
-	if o.username != "" {
-		if err := writeNordMobileconfig(o.mobileconfigPath, rows, o.username, o.password, o.prefixConfig, o.maxServers); err != nil {
-			return err
-		}
-	}
-	summarizeNord(hits)
-	return nil
+	return providerScan{hits: hits, source: source, fetched: fetched}, nil
 }
 
 func retryIKE(ctx context.Context, prime *big.Int, hits []nordHit, o nordOpts) []nordHit {
@@ -308,13 +285,7 @@ func retryIKE(ctx context.Context, prime *big.Int, hits []nordHit, o nordOpts) [
 		return hits
 	}
 	fmt.Fprintf(os.Stderr, "retry IKEv2 on %d silent servers\n", len(idx))
-	conc := o.conc / 2
-	if conc < 8 {
-		conc = 8
-	}
-	if conc > 16 {
-		conc = 16
-	}
+	conc := min(o.conc, max(8, min(16, o.conc/2)))
 	parallel(idx, conc, func(i int) int {
 		if ctx.Err() != nil {
 			return 0
@@ -340,8 +311,9 @@ func retryIKE(ctx context.Context, prime *big.Int, hits []nordHit, o nordOpts) [
 
 func probeServer(ctx context.Context, pool *udpPool, prime *big.Int, s nordServer, o nordOpts) nordHit {
 	h := nordHit{
-		Server: s,
-		WG:     "skip", OUDP: "skip", OTCP: "skip", IKE: "skip",
+		Server:   s,
+		RemoteID: s.Hostname,
+		WG:       "skip", OUDP: "skip", OTCP: "skip", IKE: "skip",
 		U53: "skip", T80: "skip",
 		WGMS: -1, OUDPMS: -1, OTCPMS: -1, U53MS: -1, T80MS: -1, IKEMS: -1,
 	}
@@ -471,10 +443,10 @@ func binaryPut32(b []byte, v uint32) {
 }
 
 func normIKE(r ikeResult) string {
-	if r.Phase1 == statusOK && r.Phase2 == statusOK {
+	switch ikePhaseRank(r.Phase1, r.Phase2) {
+	case 0:
 		return "real"
-	}
-	if r.Phase1 == statusOK {
+	case 1:
 		return "p1"
 	}
 	switch r.Phase1 {
@@ -556,6 +528,9 @@ func freshRank(fresh, firewall string) int {
 }
 
 func (h nordHit) rtt() int {
+	if h.IKE == "real" && h.IKEMS >= 0 {
+		return h.IKEMS
+	}
 	best := -1
 	consider := func(st string, n int) {
 		if (st == "real" || st == "p1") && n >= 0 && (best < 0 || n < best) {
@@ -585,11 +560,11 @@ var nordCols = []string{
 	"ovpn_tcp", "ovpn_tcp_detail", "ovpn_tcp_ms",
 	"ovpn_udp53", "ovpn_udp53_detail", "ovpn_udp53_ms",
 	"ovpn_tcp80", "ovpn_tcp80_detail", "ovpn_tcp80_ms",
-	"ike", "ike_port", "ike_phase1", "ike_phase2", "ike_auth", "ike_ms",
+	"ike", "ike_port", "ike_phase1", "ike_phase2", "ike_auth", "ike_ms", "ike_remote_id",
 	"rtt_ms",
 }
 
-func flattenNord(hits []nordHit) ([]map[string]string, []string) {
+func flattenNord(hits []nordHit, includeProvider bool) ([]map[string]string, []string) {
 	svcSet := map[string]struct{}{}
 	for _, h := range hits {
 		for _, s := range h.Server.Services {
@@ -601,7 +576,11 @@ func flattenNord(hits []nordHit) ([]map[string]string, []string) {
 		svcCols = append(svcCols, "svc_"+s)
 	}
 	sort.Strings(svcCols)
-	cols := append(append([]string{}, nordCols...), svcCols...)
+	var cols []string
+	if includeProvider {
+		cols = append(cols, "provider")
+	}
+	cols = append(append(cols, nordCols...), svcCols...)
 	rows := make([]map[string]string, 0, len(hits))
 	for _, h := range hits {
 		s := h.Server
@@ -622,7 +601,10 @@ func flattenNord(hits []nordHit) ([]map[string]string, []string) {
 			"ovpn_tcp80": or(h.T80, "skip"), "ovpn_tcp80_detail": h.T80Detail, "ovpn_tcp80_ms": ms(h.T80MS),
 			"ike": or(h.IKE, "skip"), "ike_port": portStr(h.IKEPort),
 			"ike_phase1": h.IKEPhase1, "ike_phase2": h.IKEPhase2, "ike_auth": h.IKEAuth,
-			"ike_ms": ms(h.IKEMS), "rtt_ms": rttCell(h),
+			"ike_ms": ms(h.IKEMS), "ike_remote_id": h.RemoteID, "rtt_ms": rttCell(h),
+		}
+		if includeProvider {
+			row["provider"] = h.Provider
 		}
 		for _, c := range svcCols {
 			row[c] = "no"
@@ -743,8 +725,12 @@ func summarizeNord(hits []nordHit) {
 		if h.Fresh != "yes" {
 			continue
 		}
+		label := h.Server.Hostname
+		if h.Provider != "" {
+			label = h.Provider + " / " + label
+		}
 		fmt.Fprintf(os.Stderr, "  %s  %s  load %d  %s  wg %s  ovpn %s/%s  ike %s %s\n",
-			h.Server.Hostname, h.Server.IP, h.Server.Load, h.Firewall,
+			label, h.Server.IP, h.Server.Load, h.Firewall,
 			h.WG, h.OUDP, h.OTCP, h.IKE, h.IKEAuth)
 		n++
 		if n == 8 {

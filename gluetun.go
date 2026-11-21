@@ -262,18 +262,7 @@ func runGluetun(o gluetunOpts) error {
 	if err != nil {
 		return err
 	}
-	if o.conc < 1 {
-		o.conc = 1
-	}
-	if !o.saw["c"] {
-		o.conc = defaultWorkers(32)
-	}
-	if !o.saw["ike-user"] {
-		o.ikeUser = "this is health check"
-	}
-	if !o.saw["ike-id"] {
-		o.ikeID = ""
-	}
+	o.name = name
 	if !o.saw["json"] {
 		o.jsonPath = strings.ReplaceAll(name, " ", "-") + "-results.json"
 	}
@@ -283,15 +272,31 @@ func runGluetun(o gluetunOpts) error {
 	if !o.saw["xlsx"] {
 		o.xlsxPath = strings.ReplaceAll(name, " ", "-") + "-results.xlsx"
 	}
-	scan, err := parseScanProtos(o.proto)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	result, err := scanGluetun(ctx, o)
 	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
+	_, err = result.write(o.jsonPath, o.csvPath, o.xlsxPath, false)
+	return err
+}
+
+func scanGluetun(ctx context.Context, o gluetunOpts) (providerScan, error) {
+	name := o.name
+	if !o.saw["ike-user"] {
+		o.ikeUser = "this is health check"
+	}
+	if !o.saw["ike-id"] {
+		o.ikeID = ""
+	}
+	scan, err := parseScanProtos(o.proto)
+	if err != nil {
+		return providerScan{}, err
+	}
 	c, source, fetched, err := loadGluetun(ctx, name, o.refresh, o.ttl)
 	if err != nil {
-		return err
+		return providerScan{}, err
 	}
 	targets := gluetunTargets(name, c.Servers, o.country, scan, o.limit, o.ikeID)
 	fmt.Fprintf(os.Stderr, "%s: %d catalog entries from %s (%s), probing %d endpoints (%s), workers %d\n", name, len(c.Servers), source, fetched.Format(time.RFC3339), len(targets), scan.label(), o.conc)
@@ -307,7 +312,7 @@ func runGluetun(o gluetunOpts) error {
 		}
 		pool, err = newUDPPool(poolN)
 		if err != nil {
-			return err
+			return providerScan{}, err
 		}
 		defer pool.Close()
 	}
@@ -323,24 +328,12 @@ func runGluetun(o gluetunOpts) error {
 		mu.Unlock()
 		return h
 	})
-	sort.SliceStable(hits, func(i, j int) bool {
-		a, b := freshRank(hits[i].Fresh, hits[i].Firewall), freshRank(hits[j].Fresh, hits[j].Firewall)
-		if a != b {
-			return a < b
-		}
-		return hits[i].rtt() < hits[j].rtt()
-	})
-	rows, cols := flattenNord(hits)
-	if err := writeNord(o.jsonPath, o.csvPath, o.xlsxPath, "gluetun-servers/"+name+" ("+source+")", fetched, rows, cols); err != nil {
-		return err
-	}
-	summarizeNord(hits)
-	return nil
+	return providerScan{hits: hits, source: "gluetun-servers/" + name + " (" + source + ")", fetched: fetched}, nil
 }
 
 func probeGluetunTarget(ctx context.Context, pool *udpPool, prime *big.Int, t gluetunTarget, scan scanProtos, o gluetunOpts) nordHit {
 	s := t.server
-	h := nordHit{Server: s, HasWG: hasTech(s.Tech, "wireguard_udp"), HasOUDP: hasTech(s.Tech, "openvpn_udp"),
+	h := nordHit{Server: s, RemoteID: t.remoteID, HasWG: hasTech(s.Tech, "wireguard_udp"), HasOUDP: hasTech(s.Tech, "openvpn_udp"),
 		HasOTCP: hasTech(s.Tech, "openvpn_tcp"), HasIKE: scan.onIKE(), WG: "skip", OUDP: "skip", OTCP: "skip", IKE: "skip",
 		U53: "skip", T80: "skip", WGMS: -1, OUDPMS: -1, OTCPMS: -1, IKEMS: -1, U53MS: -1, T80MS: -1}
 	if ctx.Err() != nil {

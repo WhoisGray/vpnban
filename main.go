@@ -64,61 +64,80 @@ type probe struct {
 	Fields      map[string]string `json:"fields,omitempty"`
 }
 
-func main() {
-	file := flag.String("file", "", "servers.json, a text file of hosts (one per line), or vpnban-results.json")
-	phase := flag.String("phase", "", "1 discover, 2 probe, all both. Empty: phase 2 when no file, both when the file is a catalog")
-	conc := flag.Int("c", defaultWorkers(80), "number of concurrent workers (automatic by default)")
-	dnsAddr := flag.String("dns", "1.1.1.1:53", "DNS server")
-	ikeTimeout := flag.Duration("ike-timeout", 1000*time.Millisecond, "IKEv2 timeout")
-	tcpTimeout := flag.Duration("tcp-timeout", 1200*time.Millisecond, "TCP connect timeout")
-	ikeUser := flag.String("ike-user", "this is health check", "user identity for IKE_AUTH")
-	ikeID := flag.String("ike-id", "ironnodes.com", "remote ID for IKE_AUTH")
-	jsonOut := flag.String("json", "vpnban-results.json", "JSON output path")
-	xlsxOut := flag.String("xlsx", "vpnban-results.xlsx", "Excel output path")
-	csvOut := flag.String("csv", "vpnban-results.csv", "CSV output path")
-	allowPoison := flag.Bool("allow-poisoned", false, "keep going even when DNS returns a private address such as 10.10")
-	nordMode := flag.Bool("nord", false, "Fetch the NordVPN server list and probe the protocols in -proto")
-	provider := flag.String("provider", "", "Fetch a gluetun-servers provider JSON and probe its servers")
-	proto := flag.String("proto", "ikev2", "ikev2 (default), wire, openvpn, a comma list such as ikev2,wire, or full")
-	refresh := flag.Bool("refresh", false, "Ignore the NordVPN cache and download again")
-	ttl := flag.Duration("ttl", 6*time.Hour, "NordVPN cache lifetime")
-	limitN := flag.Int("limit", 0, "Probe at most this many NordVPN servers, lowest load first")
-	country := flag.String("country", "", "NordVPN country code or name, comma-separated")
-	maxLoad := flag.Int("load", 100, "Skip NordVPN servers above this load")
-	offline := flag.Bool("offline", false, "Also probe NordVPN servers that are not online")
-	nordUsername := flag.String("nord-username", "", "NordVPN service username for the Apple profile (or VPNBAN_NORD_USERNAME)")
-	nordPassword := flag.String("nord-password", "", "NordVPN service password for the Apple profile (or VPNBAN_NORD_PASSWORD)")
-	mobileconfig := flag.String("mobileconfig", "NordVPN-IKEv2.mobileconfig", "NordVPN Apple profile output path")
-	maxServers := flag.Int("max-servers", 26, "Maximum servers in the NordVPN Apple profile (0 means unlimited)")
-	prefixConfig := flag.String("prefix-config", "$I", "Prefix for NordVPN profile connection names")
-	guiMode := flag.Bool("gui", false, "launch interactive graphical web/desktop UI")
-	webMode := flag.Bool("web", false, "alias for -gui")
-	guiPort := flag.Int("port", 8329, "port for GUI web dashboard")
-	showVersion := flag.Bool("version", false, "print version and exit")
-	doUpdate := flag.Bool("update", false, "replace this binary with the latest GitHub release")
-	flag.Parse()
+func runScanCLI(args []string) int {
+	flags := flag.NewFlagSet("vpnban", flag.ContinueOnError)
+	flags.Usage = func() {
+		usage()
+		flags.PrintDefaults()
+	}
+	file := flags.String("file", "", "servers.json, a text file of hosts (one per line), or vpnban-results.json")
+	phase := flags.String("phase", "", "1 discover, 2 probe, all both. Empty: phase 2 when no file, both when the file is a catalog")
+	conc := flags.Int("c", defaultWorkers(80), "number of concurrent workers (automatic by default)")
+	dnsAddr := flags.String("dns", "1.1.1.1:53", "DNS server")
+	ikeTimeout := flags.Duration("ike-timeout", 1000*time.Millisecond, "IKEv2 timeout")
+	tcpTimeout := flags.Duration("tcp-timeout", 1200*time.Millisecond, "TCP connect timeout")
+	ikeUser := flags.String("ike-user", "this is health check", "user identity for IKE_AUTH")
+	ikeID := flags.String("ike-id", "ironnodes.com", "remote ID for IKE_AUTH")
+	jsonOut := flags.String("json", "vpnban-results.json", "JSON output path")
+	xlsxOut := flags.String("xlsx", "vpnban-results.xlsx", "Excel output path")
+	csvOut := flags.String("csv", "vpnban-results.csv", "CSV output path")
+	allowPoison := flags.Bool("allow-poisoned", false, "keep going even when DNS returns a private address such as 10.10")
+	nordMode := flags.Bool("nord", false, "Fetch the NordVPN server list and probe the protocols in -proto")
+	provider := flags.String("provider", "", "Fetch a gluetun-servers provider JSON and probe its servers")
+	allProviders := flags.Bool("all-providers", false, "Check NordVPN and all supported gluetun providers in one report")
+	proto := flags.String("proto", "ikev2", "ikev2 (default), wire, openvpn, a comma list such as ikev2,wire, or full")
+	refresh := flags.Bool("refresh", false, "Ignore the NordVPN cache and download again")
+	ttl := flags.Duration("ttl", 6*time.Hour, "NordVPN cache lifetime")
+	limitN := flags.Int("limit", 0, "Probe at most this many NordVPN servers, lowest load first")
+	country := flags.String("country", "", "NordVPN country code or name, comma-separated")
+	maxLoad := flags.Int("load", 100, "Skip NordVPN servers above this load")
+	offline := flags.Bool("offline", false, "Also probe NordVPN servers that are not online")
+	nordUsername := flags.String("nord-username", "", "NordVPN service username for the Apple profile (or VPNBAN_NORD_USERNAME)")
+	nordPassword := flags.String("nord-password", "", "NordVPN service password for the Apple profile (or VPNBAN_NORD_PASSWORD)")
+	mobileconfig := flags.String("mobileconfig", "NordVPN-IKEv2.mobileconfig", "NordVPN Apple profile output path")
+	maxServers := flags.Int("max-servers", 26, "Maximum servers in the NordVPN Apple profile (0 means unlimited)")
+	prefixConfig := flags.String("prefix-config", "$I", "Prefix for NordVPN profile connection names")
+	guiMode := flags.Bool("gui", false, "launch interactive graphical web/desktop UI")
+	webMode := flags.Bool("web", false, "alias for -gui")
+	guiPort := flags.Int("port", 8329, "port for GUI web dashboard")
+	showVersion := flags.Bool("version", false, "print version and exit")
+	doUpdate := flags.Bool("update", false, "replace this binary with the latest GitHub release")
+	if err := flags.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "❌ unexpected arguments:", strings.Join(flags.Args(), " "))
+		return 2
+	}
 	if *showVersion {
 		fmt.Println(version)
-		return
+		return 0
 	}
 	if *guiMode || *webMode {
 		if err := startGUIServer(*guiPort, true); err != nil {
 			fmt.Fprintln(os.Stderr, "❌", err)
-			os.Exit(1)
+			return 1
 		}
-		return
+		return 0
 	}
 	if *doUpdate {
 		if err := selfUpdate(); err != nil {
 			fmt.Fprintln(os.Stderr, "❌", err)
-			os.Exit(1)
+			return 1
 		}
-		return
+		return 0
 	}
 
-	if *nordMode {
-		opts := nordOpts{
-			refresh: *refresh, ttl: *ttl, limit: *limitN, conc: *conc,
+	if *allProviders && (*nordMode || *provider != "" || *file != "" || *phase != "") {
+		fmt.Fprintln(os.Stderr, "❌ -all-providers cannot be combined with -nord, -provider, -file, or -phase")
+		return 2
+	}
+	if *nordMode || *provider != "" || *allProviders {
+		nord := nordOpts{
+			refresh: *refresh, ttl: *ttl, limit: *limitN,
 			country: *country, maxLoad: *maxLoad, offline: *offline,
 			proto:      *proto,
 			ikeTimeout: *ikeTimeout, tcpTimeout: *tcpTimeout,
@@ -127,27 +146,41 @@ func main() {
 			inputPath: *file, username: *nordUsername, password: *nordPassword,
 			mobileconfigPath: *mobileconfig, maxServers: *maxServers, prefixConfig: *prefixConfig,
 		}
-		flag.Visit(func(f *flag.Flag) { opts.seen(f.Name) })
-		if err := runNord(opts); err != nil {
-			fmt.Fprintln(os.Stderr, "❌", err)
-			os.Exit(1)
-		}
-		return
-	}
-	if *provider != "" {
-		if *file != "" {
-			fmt.Fprintln(os.Stderr, "❌ -provider and -file cannot be used together")
-			os.Exit(2)
-		}
-		o := gluetunOpts{name: *provider, refresh: *refresh, ttl: *ttl, limit: *limitN, country: *country,
-			proto: *proto, conc: *conc, ikeTimeout: *ikeTimeout, tcpTimeout: *tcpTimeout,
+		gluetun := gluetunOpts{name: *provider, refresh: *refresh, ttl: *ttl, limit: *limitN, country: *country,
+			proto: *proto, ikeTimeout: *ikeTimeout, tcpTimeout: *tcpTimeout,
 			ikeUser: *ikeUser, ikeID: *ikeID, jsonPath: *jsonOut, csvPath: *csvOut, xlsxPath: *xlsxOut}
-		flag.Visit(func(f *flag.Flag) { o.seen(f.Name) })
-		if err := runGluetun(o); err != nil {
-			fmt.Fprintln(os.Stderr, "❌", err)
-			os.Exit(1)
+		flags.Visit(func(f *flag.Flag) {
+			nord.seen(f.Name)
+			gluetun.seen(f.Name)
+		})
+		workers := defaultWorkers(32)
+		if nord.saw["c"] {
+			workers = max(1, *conc)
 		}
-		return
+		nord.conc, gluetun.conc = workers, workers
+
+		var err error
+		switch {
+		case *allProviders:
+			if !nord.saw["proto"] {
+				const allProtocols = "ikev2,wire,openvpn"
+				nord.proto, gluetun.proto = allProtocols, allProtocols
+			}
+			err = runAllProviders(nord, gluetun)
+		case *nordMode:
+			err = runNord(nord)
+		default:
+			if *file != "" {
+				fmt.Fprintln(os.Stderr, "❌ -provider and -file cannot be used together")
+				return 2
+			}
+			err = runGluetun(gluetun)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "❌", err)
+			return 1
+		}
+		return 0
 	}
 
 	if *file == "" && *phase == "" {
@@ -156,18 +189,18 @@ func main() {
 			*phase = "2"
 		} else {
 			usage()
-			os.Exit(2)
+			return 2
 		}
 	}
 	if *file == "" {
 		fmt.Fprintln(os.Stderr, "❌ input file is required")
-		os.Exit(2)
+		return 2
 	}
 
 	entries, saved, kind, err := loadInput(*file)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return 1
 	}
 	mode := *phase
 	if mode == "" {
@@ -182,7 +215,7 @@ func main() {
 	if mode == "1" || mode == "all" {
 		if kind != "catalog" {
 			fmt.Fprintln(os.Stderr, "❌ phase 1 only runs on a domain catalog (server JSON or a text file)")
-			os.Exit(2)
+			return 2
 		}
 		domains := uniqueDomains(entries)
 		fmt.Fprintf(os.Stderr, "🔍 phase 1: resolving %d domains via %s with %d workers\n", len(domains), *dnsAddr, *conc)
@@ -197,7 +230,7 @@ func main() {
 		}
 		if public == 0 && poisonOnly > 0 && !*allowPoison {
 			fmt.Fprintf(os.Stderr, "🛑 VPN is on: %d domains returned only a private address (such as 10.10). Turn the VPN off and run again.\n", poisonOnly)
-			os.Exit(3)
+			return 3
 		}
 		if poisonOnly > 0 {
 			fmt.Fprintf(os.Stderr, "⚠️ warning: %d domains had spoofed answers and were skipped.\n", poisonOnly)
@@ -205,7 +238,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "✅ phase 1 done: %d public addresses\n", public)
 		if mode == "1" {
 			writeAll(*jsonOut, *xlsxOut, *csvOut, entries, nil, found)
-			return
+			return 0
 		}
 		saved = targetsFrom(found)
 	}
@@ -216,22 +249,14 @@ func main() {
 		} else {
 			fmt.Fprintln(os.Stderr, "❌ no addresses to probe")
 		}
-		os.Exit(1)
+		return 1
 	}
 	fmt.Fprintf(os.Stderr, "📡 phase 2: probing %d addresses, concurrency %d\n", len(saved), *conc)
 	probes := scan(saved, *conc, *ikeUser, *ikeID, *ikeTimeout, *tcpTimeout)
-	sort.SliceStable(probes, func(i, j int) bool {
-		ai, aj := math.MaxInt, math.MaxInt
-		if probes[i].AvgMS != nil {
-			ai = *probes[i].AvgMS
-		}
-		if probes[j].AvgMS != nil {
-			aj = *probes[j].AvgMS
-		}
-		return ai < aj
-	})
+	sortProbes(probes)
 	writeAll(*jsonOut, *xlsxOut, *csvOut, entries, probes, found)
 	summarize(probes)
+	return 0
 }
 
 func usage() {
@@ -244,6 +269,11 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  vpnban -nord -refresh -c 256 -country se -limit 40")
 	fmt.Fprintln(os.Stderr, "  vpnban -provider mullvad -proto wire -country se -limit 40")
 	fmt.Fprintln(os.Stderr, "  vpnban -provider 'vpn unlimited' -proto ikev2")
+	fmt.Fprintln(os.Stderr, "  vpnban -all-providers -limit 10   combined report, up to 10 endpoints per provider")
+	fmt.Fprintln(os.Stderr, "  vpnban interactive               open the terminal menu")
+	fmt.Fprintln(os.Stderr, "  vpnban help profile              Apple profile options and usage")
+	fmt.Fprintln(os.Stderr, "  vpnban help accounts             manage saved VPN accounts")
+	fmt.Fprintln(os.Stderr, "  vpnban help config               show or change the account directory")
 	fmt.Fprintln(os.Stderr, "  vpnban -file servers.json")
 	fmt.Fprintln(os.Stderr, "  vpnban -file server.txt          one domain or IPv4 per line")
 	fmt.Fprintln(os.Stderr, "  vpnban -update                   install the latest release")
@@ -607,6 +637,34 @@ func targetsFrom(rows []resolved) []probe {
 	return out
 }
 
+func ikePhaseRank(phase1, phase2 string) int {
+	if phase1 != statusOK {
+		return 2
+	}
+	if phase2 != statusOK {
+		return 1
+	}
+	return 0
+}
+
+func probeRTT(p probe) *int {
+	if p.AvgMS != nil {
+		return p.AvgMS
+	}
+	return p.IKEMS
+}
+
+func sortProbes(probes []probe) {
+	sort.SliceStable(probes, func(i, j int) bool {
+		a, b := probes[i], probes[j]
+		if ar, br := ikePhaseRank(a.Phase1, a.Phase2), ikePhaseRank(b.Phase1, b.Phase2); ar != br {
+			return ar < br
+		}
+		ar, br := probeRTT(a), probeRTT(b)
+		return ar != nil && (br == nil || *ar < *br)
+	})
+}
+
 func scan(items []probe, conc int, ikeUser, remoteID string, ikeTimeout, tcpTimeout time.Duration) []probe {
 	var done atomic.Int64
 	total := len(items)
@@ -638,6 +696,9 @@ func scan(items []probe, conc int, ikeUser, remoteID string, ikeTimeout, tcpTime
 			ikeRes = probeIKE(item.IP, prime, ikeUser, remoteID, ikeTimeout)
 		}()
 		wg.Wait()
+		item.MinMS, item.AvgMS, item.MaxMS = nil, nil, nil
+		item.Reachable = false
+		item.IKEv2, item.IKEPort, item.IKEMS = false, nil, nil
 		var samples []int
 		if tcp443.ok {
 			samples = append(samples, tcp443.ms)
@@ -771,8 +832,8 @@ func writeAll(jsonPath, xlsxPath, csvPath string, entries []entry, probes []prob
 }
 
 func exportRows(entries []entry, probes []probe, found []resolved) []map[string]string {
-	byDomain := map[string][]probe{}
-	for _, item := range probes {
+	byDomain := map[string][]entry{}
+	for _, item := range entries {
 		byDomain[item.Domain] = append(byDomain[item.Domain], item)
 	}
 	ipsByDomain := map[string]resolved{}
@@ -810,35 +871,22 @@ func exportRows(entries []entry, probes []probe, found []resolved) []map[string]
 		}
 		rows = append(rows, row)
 	}
-	if len(entries) == 0 {
-		for i := range probes {
-			push(probeMeta(&probes[i]), &probes[i], nil, nil, "")
-		}
-		return rows
-	}
-	for _, item := range entries {
+	for i := range probes {
+		item := &probes[i]
 		seen[item.Domain] = true
-		disc, ok := ipsByDomain[item.Domain]
 		list := byDomain[item.Domain]
 		if len(list) == 0 {
-			var ips, poisonedIPs []string
-			errText := ""
-			if ok {
-				ips, poisonedIPs, errText = disc.IPs, disc.Poisoned, disc.Err
-			}
-			push(item.Fields, nil, ips, poisonedIPs, errText)
+			push(probeMeta(item), item, nil, nil, "")
 			continue
 		}
-		for i := range list {
-			push(item.Fields, &list[i], nil, nil, "")
+		for _, original := range list {
+			push(original.Fields, item, nil, nil, "")
 		}
 	}
-	for domain, list := range byDomain {
-		if seen[domain] {
-			continue
-		}
-		for i := range list {
-			push(probeMeta(&list[i]), &list[i], nil, nil, "")
+	for _, item := range entries {
+		if !seen[item.Domain] {
+			disc := ipsByDomain[item.Domain]
+			push(item.Fields, nil, disc.IPs, disc.Poisoned, disc.Err)
 		}
 	}
 	return rows
@@ -930,14 +978,15 @@ func summarize(probes []probe) {
 	var best *probe
 	for i := range probes {
 		item := &probes[i]
-		if item.Phase2 == statusOK {
+		switch ikePhaseRank(item.Phase1, item.Phase2) {
+		case 0:
 			p2Good++
-			if best == nil || (item.AvgMS != nil && best.AvgMS != nil && *item.AvgMS < *best.AvgMS) {
+			if best == nil {
 				best = item
 			}
-		} else if item.Phase1 == statusOK {
+		case 1:
 			p1Only++
-		} else {
+		default:
 			dead++
 		}
 	}
@@ -947,11 +996,11 @@ func summarize(probes []probe) {
 		if best.IKEPort != nil {
 			ikePort = *best.IKEPort
 		}
-		avgMS := 0
-		if best.AvgMS != nil {
-			avgMS = *best.AvgMS
+		rtt := "RTT unavailable"
+		if ms := probeRTT(*best); ms != nil {
+			rtt = fmt.Sprintf("%dms", *ms)
 		}
-		fmt.Fprintf(os.Stderr, "🏆 best real server: %s  %s  %dms  IKEv2:%d (%s)\n", best.IP, best.Name, avgMS, ikePort, best.AuthStatus)
+		fmt.Fprintf(os.Stderr, "🏆 best real server: %s  %s  %s  IKEv2:%d (%s)\n", best.IP, best.Name, rtt, ikePort, best.AuthStatus)
 	}
 }
 

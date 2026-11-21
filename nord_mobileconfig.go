@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -71,11 +72,15 @@ func selectNordProfileServers(rows []map[string]string, max int) []profileServer
 		if !strings.EqualFold(row["status"], "online") || row["ip"] == "" || row["hostname"] == "" || row["city"] == "" {
 			continue
 		}
-		if row["ike"] != "real" && row["proven"] != "ike" && !strings.Contains(strings.ToLower(row["technologies"]), "ikev2") {
+		if row["ike_phase1"] != "" || row["ike_phase2"] != "" {
+			if ikePhaseRank(row["ike_phase1"], row["ike_phase2"]) != 0 {
+				continue
+			}
+		} else if row["ike"] != "real" && row["proven"] != "ike" && !strings.Contains(strings.ToLower(row["technologies"]), "ikev2") {
 			continue
 		}
 		var rtt float64
-		for _, key := range []string{"rtt_ms", "ike_ms"} {
+		for _, key := range []string{"ike_ms", "rtt_ms"} {
 			n, err := strconv.ParseFloat(row[key], 64)
 			if err == nil && n > 0 && n < 5000 {
 				rtt = n
@@ -163,6 +168,8 @@ func plistXML(b *bytes.Buffer, value any) {
 			plistXML(b, e)
 		}
 		b.WriteString("</array>\n")
+	case []byte:
+		fmt.Fprintf(b, "<data>%s</data>\n", base64.StdEncoding.EncodeToString(v))
 	case int:
 		fmt.Fprintf(b, "<integer>%d</integer>\n", v)
 	case string:
@@ -172,6 +179,9 @@ func plistXML(b *bytes.Buffer, value any) {
 	}
 }
 func writeNordMobileconfig(path string, rows []map[string]string, username, password, prefix string, max int) error {
+	if !validPlistText(username) || !validPlistText(password) {
+		return fmt.Errorf("service credentials contain characters that XML cannot represent")
+	}
 	servers := selectNordProfileServers(rows, max)
 	if len(servers) == 0 {
 		return fmt.Errorf("no suitable online IKEv2 servers with latency found for mobileconfig")
@@ -185,27 +195,17 @@ func writeNordMobileconfig(path string, rows []map[string]string, username, pass
 	}
 	id := profileUUID()
 	profile := plistDict{{"PayloadDisplayName", fmt.Sprintf("NordVPN IKEv2 (%d servers)", len(servers))}, {"PayloadIdentifier", "com.nordvpn.ikev2.profile." + id}, {"PayloadUUID", id}, {"PayloadType", "Configuration"}, {"PayloadVersion", 1}, {"PayloadContent", payloads}}
+	if err := writeApplePlist(path, profile); err != nil {
+		return fmt.Errorf("write mobileconfig: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "mobileconfig: %d servers written to %s\n", len(servers), path)
+	return nil
+}
+
+func writeApplePlist(path string, profile plistDict) error {
 	var out bytes.Buffer
 	out.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n")
 	plistXML(&out, profile)
 	out.WriteString("</plist>\n")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0600)
-	if err != nil {
-		return fmt.Errorf("create mobileconfig: %w", err)
-	}
-	defer f.Close()
-	if err := f.Chmod(0600); err != nil {
-		return fmt.Errorf("secure mobileconfig: %w", err)
-	}
-	if err := f.Truncate(0); err != nil {
-		return err
-	}
-	if _, err := f.Write(out.Bytes()); err != nil {
-		return fmt.Errorf("write mobileconfig: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close mobileconfig: %w", err)
-	}
-	fmt.Fprintf(os.Stderr, "mobileconfig: %d servers written to %s\n", len(servers), path)
-	return nil
+	return writePrivateFile(path, out.Bytes())
 }

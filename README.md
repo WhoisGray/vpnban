@@ -156,7 +156,63 @@ This mode downloads the matching JSON from [gluetun-servers](https://github.com/
 
 Provider reports use `<provider>-results.json`, `.csv`, and `.xlsx` by default. Each provider has a separate cache under `~/.cache/nordike/gluetun`, using `-ttl` and `-refresh` without changing NordVPN's cache.
 
+### Check all supported providers
+
+```bash
+vpnban -all-providers -country se -limit 10 -c 32
+vpnban -all-providers -proto ikev2 -limit 10
+```
+
+`-all-providers` checks NordVPN and all supported gluetun providers in one run. It defaults to IKEv2, WireGuard, and OpenVPN. `-limit` applies to each provider, and `-c` is shared across providers. The combined `all-providers-results.json`, `.csv`, and `.xlsx` reports include a `provider` column. If a provider fails, vpnban writes the results it obtained, reports the failure, and exits with a nonzero status.
+
+### Interactive terminal menu
+
+```bash
+vpnban interactive
+```
+
+Use the arrow keys and Enter to choose a provider scan, check a host list, build an Apple profile, manage accounts, or open settings. Use the numbered menu when input or output is redirected. The scan wizard starts with a limit of 10 endpoints per provider.
+
+### Build an Apple IKEv2 profile
+
+1. Save each VPN account under a different alias. You can save multiple accounts from the same provider. The terminal hides the service password as you type.
+
+   ```bash
+   vpnban accounts add -name nord-home -provider nordvpn
+   vpnban accounts add -name nord-work -provider nordvpn
+   vpnban accounts list
+   ```
+
+2. Run an IKEv2 check and build the profile from its JSON report.
+
+   ```bash
+   vpnban -nord -proto ikev2 -limit 30
+   vpnban profile -account nord-home -input nord-results.json -output nord-home.mobileconfig
+   ```
+
+   You can also use `all-providers-results.json` as input. To generate it for this workflow, run `vpnban -all-providers -proto ikev2 -limit 30`. Each profile uses one account and includes only its provider's servers that passed both IKEv2 phases, fastest first. The default is eight VPN entries. Use `-limit` to change it.
+
+3. On macOS, run `plutil -lint nord-home.mobileconfig` to check the file format. To install on iPhone or iPad, open the file and go to **Settings → General → VPN & Device Management**. On Mac, open the file and use **System Settings → General → Device Management**. [Apple installation guide for Mac](https://support.apple.com/guide/mac-help/configuration-profiles-standardize-settings-mh35561/mac)
+
+This works with any listed provider that offers manual IKEv2 with username and password authentication and has a verified server in the report. Obtain the service credentials and certificate settings from your provider. Use `-ca path/to/provider-root.pem` to include its root CA or follow its separate trust setup instructions. Use `-remote-id` if the provider specifies a different certificate identity. NordVPN documents its service credentials and root CA setup. [NordVPN manual IKEv2 guide](https://support.nordvpn.com/hc/en-us/articles/20371657885329-How-to-connect-to-NordVPN-with-a-manual-IKEv2-IPSec-connection-on-an-iOS-device)
+
+Saved accounts and exported profiles contain service credentials. Keep those files private. The account list shows aliases and providers only.
+
+### Account storage and command help
+
+```bash
+vpnban config path
+vpnban config set-dir "$HOME/vpnban-accounts"
+vpnban help profile
+vpnban help accounts
+vpnban help config
+```
+
+vpnban uses your OS user configuration directory by default. **Settings** in the interactive menu changes the same location as `config set-dir`. Selecting a new directory copies your current accounts there and keeps the original files. Selecting an existing directory opens its accounts. Set `VPNBAN_CONFIG_DIR` to use a directory for a single run.
+
 ### Read the results
+
+Servers that pass both IKEv2 phases appear first, in ascending latency order. Provider reports rank those servers by IKEv2 RTT. File-mode reports use average TCP RTT when available and fall back to IKEv2 RTT.
 
 | Value | Meaning |
 | --- | --- |
@@ -182,7 +238,8 @@ In custom-file discovery, if DNS returns only private addresses, vpnban stops by
 | `-port` | `8329` | Port for the GUI web server |
 | `-nord` | `false` | Discover and check NordVPN servers |
 | `-provider` | — | Discover another provider from gluetun-servers JSON |
-| `-proto` | `ikev2` | NordVPN or provider protocol selection |
+| `-all-providers` | `false` | Check every supported provider and combine results |
+| `-proto` | `ikev2`; all-provider mode uses `ikev2,wire,openvpn` | Provider protocol selection |
 | `-country` | All | Comma-separated country codes or names |
 | `-limit` | `0` | Server or endpoint limit; zero means all (NordVPN: lowest load first) |
 | `-load` | `100` | Maximum NordVPN server load |
